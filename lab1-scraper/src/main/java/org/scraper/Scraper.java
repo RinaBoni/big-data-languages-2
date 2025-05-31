@@ -73,9 +73,7 @@ public class Scraper {
 
             // Подключаемся к сайту с установленным таймаутом и User-Agent
             Document document = Jsoup.connect(url)
-                    .timeout(CONNECTION_TIMEOUT)
-                    .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-                    .get();
+                    .timeout(CONNECTION_TIMEOUT).get();
 
             // Получаем список всех новостных блоков на странице
             Elements newsItems = document.select(".wrap_RL97A");
