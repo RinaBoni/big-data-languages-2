@@ -5,6 +5,8 @@ import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
+import java.sql.*;
+
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -29,6 +31,9 @@ public class Scraper {
     // Максимальное количество попыток парсинга при ошибках
     private static final int MAX_RETRIES = 3;
 
+    // Путь к файлу БД
+    private static final String DB_URL = "jdbc:sqlite:news.db";
+
     // =============================================
     // Класс для хранения данных одной новости
     // =============================================
@@ -50,8 +55,12 @@ public class Scraper {
     // Основной метод
     // =============================================
     public static void main(String[] args) {
+
         // URL целевой страницы
         String url = "https://www.chita.ru/text/";
+
+        // Инициализация БД
+        initializeDatabase();
 
         // Имя файла для сохранения результатов
         String csvFile = "news_results.csv";
@@ -71,9 +80,10 @@ public class Scraper {
             // Получение основной страницы с новостями
             // =============================================
 
-            // Подключаемся к сайту с установленным таймаутом и User-Agent
+            // Подключаемся к сайту с установленным таймаутом
             Document document = Jsoup.connect(url)
-                    .timeout(CONNECTION_TIMEOUT).get();
+                    .timeout(CONNECTION_TIMEOUT)
+                    .get();
 
             // Получаем список всех новостных блоков на странице
             Elements newsItems = document.select(".wrap_RL97A");
@@ -132,6 +142,16 @@ public class Scraper {
             // Записываем все собранные данные в CSV
             writeToCsv(data, csvFile);
             System.out.println("Данные успешно сохранены в: " + csvFile);
+            for (Future<NewsItem> future : futures) {
+                try {
+                    NewsItem newsItem = future.get();
+                    saveToDatabase(newsItem);
+                } catch (InterruptedException | ExecutionException e) {
+                    System.err.println("Ошибка при обработке элемента: " + e.getMessage());
+                }
+            }
+
+            System.out.println("Данные успешно сохранены в базу данных");
 
         } catch (IOException e) {
             // Обработка ошибок подключения к сайту
@@ -275,5 +295,52 @@ public class Scraper {
         }
 
         return sb.toString();
+    }
+
+    // Инициализация БД и создание таблицы
+    private static void initializeDatabase() {
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             Statement stmt = conn.createStatement()) {
+
+            // Создаем таблицу, если она не существует
+            String sql = "CREATE TABLE IF NOT EXISTS news (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+                    "title TEXT NOT NULL," +
+                    "description TEXT," +
+                    "date TEXT," +
+                    "views INTEGER," +
+                    "comments INTEGER," +
+                    "image_url TEXT" +
+                    ")";
+
+            stmt.execute(sql);
+            System.out.println("Таблица news создана или уже существует");
+
+        } catch (SQLException e) {
+            System.err.println("Ошибка при инициализации БД: " + e.getMessage());
+        }
+    }
+
+    // Сохранение новости в БД
+    private static void saveToDatabase(NewsItem item) {
+        String sql = "INSERT INTO news(title, description, date, views, comments, image_url) VALUES(?,?,?,?,?,?)";
+
+        try (Connection conn = DriverManager.getConnection(DB_URL);
+             PreparedStatement pstmt = conn.prepareStatement(sql)) {
+
+            // Устанавливаем параметры запроса
+            pstmt.setString(1, item.title);
+            pstmt.setString(2, item.description);
+            pstmt.setString(3, item.date);
+            pstmt.setInt(4, Integer.parseInt(item.views));
+            pstmt.setInt(5, Integer.parseInt(item.comments));
+            pstmt.setString(6, item.imageUrl);
+
+            // Выполняем запрос
+            pstmt.executeUpdate();
+
+        } catch (SQLException e) {
+            System.err.println("Ошибка при сохранении в БД: " + e.getMessage());
+        }
     }
 }
