@@ -13,6 +13,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 
+import static org.scraper.CsvWork.writeToCsv;
+import static org.scraper.DbWork.initializeDatabase;
+import static org.scraper.DbWork.saveToDatabase;
+import static org.scraper.Parse.parseNewsItem;
+
 public class Scraper {
 
     // =============================================
@@ -28,28 +33,13 @@ public class Scraper {
     // Размер пула потоков (оптимально для 4-8 ядерного процессора)
     private static final int THREAD_POOL_SIZE = 5;
 
-    // Максимальное количество попыток парсинга при ошибках
-    private static final int MAX_RETRIES = 3;
 
-    // Путь к файлу БД
-    private static final String DB_URL = "jdbc:sqlite:news.db";
+
 
     // =============================================
     // Класс для хранения данных одной новости
     // =============================================
-    private static class NewsItem {
-        String title;         // Заголовок новости
-        String description;   // Краткое описание
-        String date;          // Дата и время публикации
-        String views;         // Количество просмотров
-        String comments;      // Количество комментариев
-        String imageUrl;      // Ссылка на изображение
 
-        // Преобразуем данные новости в массив строк для CSV
-        String[] toArray() {
-            return new String[]{title, description, date, views, comments, imageUrl};
-        }
-    }
 
     // =============================================
     // Основной метод
@@ -76,9 +66,7 @@ public class Scraper {
         data.add(new String[]{"Title", "Description", "Date/Time", "Views", "Comments", "Image URL"});
 
         try {
-            // =============================================
             // Получение основной страницы с новостями
-            // =============================================
 
             // Подключаемся к сайту с установленным таймаутом
             Document document = Jsoup.connect(url)
@@ -92,9 +80,7 @@ public class Scraper {
             // Счетчик для контроля задержек между запросами
             int requestCounter = 0;
 
-            // =============================================
             // Параллельных парсинг новостей
-            // =============================================
 
             // Для каждого новостного элемента создаем задачу парсинга
             for (Element item : newsItems) {
@@ -117,9 +103,7 @@ public class Scraper {
                 futures.add(executor.submit(() -> parseNewsItem(item)));
             }
 
-            // =============================================
             // Собираем результаты
-            // =============================================
 
             // Проходим по всем Future объектам и получаем результаты
             for (Future<NewsItem> future : futures) {
@@ -135,9 +119,7 @@ public class Scraper {
                 }
             }
 
-            // =============================================
             // Сохранение результатов в CSV
-            // =============================================
 
             // Записываем все собранные данные в CSV
             writeToCsv(data, csvFile);
@@ -157,9 +139,9 @@ public class Scraper {
             // Обработка ошибок подключения к сайту
             System.err.println("Ошибка при подключении к сайту: " + e.getMessage());
         } finally {
-            // =============================================
+
+
             // Завершение работы пулов потоков
-            // =============================================
 
             // Инициируем завершение работы пула потоков
             executor.shutdown();
@@ -177,170 +159,4 @@ public class Scraper {
         }
     }
 
-    // =============================================
-    // Метод для парсинга одного элемента новости
-    // =============================================
-    private static NewsItem parseNewsItem(Element item) {
-        // Создаем объект для хранения данных новости
-        NewsItem newsItem = new NewsItem();
-
-        // Счетчик попыток парсинга
-        int retryCount = 0;
-
-        // Флаг успешного завершения парсинга
-        boolean success = false;
-
-        // Пытаемся распарсить элемент (максимум MAX_RETRIES попыток)
-        while (!success && retryCount < MAX_RETRIES) {
-            try {
-                // Парсим заголовок новости
-                newsItem.title = item.select(".header_RL97A").text();
-
-                // Парсим описание новости
-                newsItem.description = item.select(".subtitle_RL97A").text();
-
-                // Находим блок со статистикой (дата, просмотры, комментарии)
-                Element stats = item.select(".statistic_RL97A").first();
-
-                // Парсим дату и время публикации
-                newsItem.date = stats != null ? stats.select(".text_eiDCU").first().text() : "N/A";
-
-                // Инициализируем значения по умолчанию
-                newsItem.views = "0";
-                newsItem.comments = "0";
-
-                // Если блок статистики найден
-                if (stats != null) {
-                    // Получаем все элементы статистики
-                    Elements statItems = stats.select(".cell_eiDCU");
-
-                    // Перебираем элементы статистики
-                    for (Element stat : statItems) {
-                        // Если элемент содержит иконку глаза - это просмотры
-                        if (stat.html().contains("icon-eye")) {
-                            newsItem.views = stat.select(".text_eiDCU").text();
-                        }
-                        // Если элемент содержит иконку комментариев
-                        else if (stat.html().contains("icon-comments")) {
-                            String commentsText = stat.select(".text_eiDCU").text();
-                            // Если текст "Обсудить" - комментариев нет (0)
-                            newsItem.comments = commentsText.equals("Обсудить") ? "0" : commentsText;
-                        }
-                    }
-                }
-
-                // Парсим URL изображения
-                newsItem.imageUrl = item.select(".image_65Oqn picture img").attr("src");
-
-                // Устанавливаем флаг успешного завершения
-                success = true;
-
-            } catch (Exception e) {
-                // Увеличиваем счетчик попыток
-                retryCount++;
-
-                // Если превысили максимальное количество попыток
-                if (retryCount >= MAX_RETRIES) {
-                    System.err.println("Не удалось обработать элемент после " + MAX_RETRIES + " попыток");
-                } else {
-                    // Делаем задержку перед повторной попыткой (увеличивается с каждой попыткой)
-                    try {
-                        Thread.sleep(REQUEST_DELAY_MS * retryCount);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            }
-        }
-
-        return newsItem;
-    }
-
-    // =============================================
-    // Метод для записи данных в CSV
-    // =============================================
-    private static void writeToCsv(List<String[]> data, String filename) {
-        try (FileWriter writer = new FileWriter(filename)) {
-            // Записываем каждую строку данных
-            for (String[] row : data) {
-                writer.write(toCsvRow(row) + "\n");
-            }
-        } catch (IOException e) {
-            System.err.println("Ошибка при записи в CSV файл: " + e.getMessage());
-        }
-    }
-
-    // =============================================
-    // Метод для форматирования строки CSV
-    // =============================================
-    private static String toCsvRow(String[] fields) {
-        StringBuilder sb = new StringBuilder();
-
-        // Обрабатываем каждое поле в строке
-        for (int i = 0; i < fields.length; i++) {
-            // Добавляем запятую перед всеми полями, кроме первого
-            if (i > 0) sb.append(",");
-
-            // Получаем значение поля (или пустую строку, если null)
-            String field = fields[i] != null ? fields[i] : "";
-
-            // Если поле содержит запятые или кавычки - обрабатываем специальным образом
-            if (field.contains(",") || field.contains("\"")) {
-                // Экранируем кавычки и заключаем поле в кавычки
-                sb.append("\"").append(field.replace("\"", "\"\"")).append("\"");
-            } else {
-                // Просто добавляем поле без обработки
-                sb.append(field);
-            }
-        }
-
-        return sb.toString();
-    }
-
-    // Инициализация БД и создание таблицы
-    private static void initializeDatabase() {
-        try (Connection conn = DriverManager.getConnection(DB_URL);
-             Statement stmt = conn.createStatement()) {
-
-            // Создаем таблицу, если она не существует
-            String sql = "CREATE TABLE IF NOT EXISTS news (" +
-                    "id INTEGER PRIMARY KEY AUTOINCREMENT," +
-                    "title TEXT NOT NULL," +
-                    "description TEXT," +
-                    "date TEXT," +
-                    "views INTEGER," +
-                    "comments INTEGER," +
-                    "image_url TEXT" +
-                    ")";
-
-            stmt.execute(sql);
-            System.out.println("Таблица news создана или уже существует");
-
-        } catch (SQLException e) {
-            System.err.println("Ошибка при инициализации БД: " + e.getMessage());
-        }
-    }
-
-    // Сохранение новости в БД
-    private static void saveToDatabase(NewsItem item) {
-        String sql = "INSERT INTO news(title, description, date, views, comments, image_url) VALUES(?,?,?,?,?,?)";
-
-        try (Connection conn = DriverManager.getConnection(DB_URL);
-             PreparedStatement pstmt = conn.prepareStatement(sql)) {
-
-            // Устанавливаем параметры запроса
-            pstmt.setString(1, item.title);
-            pstmt.setString(2, item.description);
-            pstmt.setString(3, item.date);
-            pstmt.setInt(4, Integer.parseInt(item.views));
-            pstmt.setInt(5, Integer.parseInt(item.comments));
-            pstmt.setString(6, item.imageUrl);
-
-            // Выполняем запрос
-            pstmt.executeUpdate();
-
-        } catch (SQLException e) {
-            System.err.println("Ошибка при сохранении в БД: " + e.getMessage());
-        }
-    }
 }

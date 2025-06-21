@@ -1,5 +1,4 @@
-
-object Matt {
+class Matth {
   // 1. Вычисление 2^n
   def powerOfTwo(n: Int): BigInt = {
     require(n >= 0, "n must be non-negative")
